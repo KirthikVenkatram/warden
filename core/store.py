@@ -4,7 +4,7 @@ import sqlite3
 import time
 from pathlib import Path
 
-from core.models import Decision
+from core.models import Decision, Finding
 
 _DEFAULT_DB_PATH = Path(".cache/warden.db")
 
@@ -27,6 +27,12 @@ def _connect() -> sqlite3.Connection:
             action TEXT NOT NULL,
             reasons TEXT NOT NULL,
             auto_fixable INTEGER NOT NULL,
+            severity TEXT,
+            cvss REAL,
+            epss REAL,
+            kev INTEGER,
+            installed_version TEXT,
+            fixed_version TEXT,
             PRIMARY KEY (cve, package, repo)
         )
         """
@@ -44,20 +50,37 @@ def _connect() -> sqlite3.Connection:
     return conn
 
 
-def upsert_decisions(repo: str, decisions: list[Decision]) -> None:
-    """Insert or update decisions for repo, deduped on (cve, package, repo)."""
+def upsert_decisions(repo: str, decisions: list[Decision], findings: list[Finding] | None = None) -> None:
+    """Insert or update decisions for repo, deduped on (cve, package, repo).
+
+    If findings are given (matched to decisions by cve+package), their severity/cvss/epss/
+    kev/installed_version/fixed_version are stored alongside the decision so
+    explain_finding can report the exact enrichment data behind a policy decision, not
+    just its text reasons.
+    """
+    finding_by_key = {(f.cve, f.package): f for f in (findings or [])}
     conn = _connect()
     try:
         with conn:
             for decision in decisions:
+                finding = finding_by_key.get((decision.cve, decision.package))
                 conn.execute(
                     """
-                    INSERT INTO findings (cve, package, repo, action, reasons, auto_fixable)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    INSERT INTO findings (
+                        cve, package, repo, action, reasons, auto_fixable,
+                        severity, cvss, epss, kev, installed_version, fixed_version
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(cve, package, repo) DO UPDATE SET
                         action = excluded.action,
                         reasons = excluded.reasons,
-                        auto_fixable = excluded.auto_fixable
+                        auto_fixable = excluded.auto_fixable,
+                        severity = excluded.severity,
+                        cvss = excluded.cvss,
+                        epss = excluded.epss,
+                        kev = excluded.kev,
+                        installed_version = excluded.installed_version,
+                        fixed_version = excluded.fixed_version
                     """,
                     (
                         decision.cve,
@@ -66,6 +89,12 @@ def upsert_decisions(repo: str, decisions: list[Decision]) -> None:
                         decision.action.value,
                         json.dumps(decision.reasons),
                         int(decision.auto_fixable),
+                        finding.severity.value if finding else None,
+                        finding.cvss if finding else None,
+                        finding.epss if finding else None,
+                        int(finding.kev) if finding else None,
+                        finding.installed_version if finding else None,
+                        finding.fixed_version if finding else None,
                     ),
                 )
     finally:
@@ -129,3 +158,56 @@ def get_decisions(repo: str, action: str | None = None) -> list[Decision]:
         )
         for cve, package, action_, reasons, auto_fixable in rows
     ]
+
+
+def get_finding_detail(cve: str, repo: str) -> dict | None:
+    """Return the stored decision for cve+repo plus its enrichment context, or None.
+
+    Includes severity/cvss/epss/kev/installed_version/fixed_version alongside the
+    decision fields so callers (e.g. explain_finding) can format a full explanation
+    without recomputing anything — pure read of what upsert_decisions stored at scan time.
+    """
+    conn = _connect()
+    try:
+        row = conn.execute(
+            """
+            SELECT package, action, reasons, auto_fixable, severity, cvss, epss, kev,
+                   installed_version, fixed_version
+            FROM findings
+            WHERE cve = ? AND repo = ?
+            LIMIT 1
+            """,
+            (cve, repo),
+        ).fetchone()
+    finally:
+        conn.close()
+
+    if row is None:
+        return None
+
+    (
+        package,
+        action,
+        reasons,
+        auto_fixable,
+        severity,
+        cvss,
+        epss,
+        kev,
+        installed_version,
+        fixed_version,
+    ) = row
+    return {
+        "cve": cve,
+        "repo": repo,
+        "package": package,
+        "action": action,
+        "reasons": json.loads(reasons),
+        "auto_fixable": bool(auto_fixable),
+        "severity": severity,
+        "cvss": cvss,
+        "epss": epss,
+        "kev": bool(kev) if kev is not None else None,
+        "installed_version": installed_version,
+        "fixed_version": fixed_version,
+    }

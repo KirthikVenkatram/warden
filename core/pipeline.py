@@ -24,7 +24,7 @@ def run_scan(repo: str, source: str, tests_green: bool = False, threshold: float
         findings = enrich.enrich(findings)
 
     decisions = policy.evaluate(findings, tests_green, threshold)
-    store.upsert_decisions(repo, decisions)
+    store.upsert_decisions(repo, decisions, findings)
 
     counts = Counter(d.action.value for d in decisions)
     return ScanSummary(
@@ -41,3 +41,35 @@ def run_scan(repo: str, source: str, tests_green: bool = False, threshold: float
 def get_decisions(repo: str, action: str | None = None) -> list[Decision]:
     """Thin pass-through to store.get_decisions."""
     return store.get_decisions(repo, action)
+
+
+def explain_finding(cve: str, repo: str) -> str:
+    """Format a human-readable explanation of the stored decision for cve+repo.
+
+    Pure formatting over what run_scan already stored (severity, CVSS, EPSS, KEV,
+    installed/fixed versions, the exact policy reasons, auto-fixability) — no
+    re-scanning, no LLM.
+    """
+    detail = store.get_finding_detail(cve, repo)
+    if detail is None:
+        return f"No stored finding for {cve} in {repo}. Run scan_repo first."
+
+    lines = [f"{detail['cve']} ({detail['package']}) in {repo}", f"Action: {detail['action']}"]
+
+    if detail["severity"] is not None:
+        lines.append(f"Severity: {detail['severity']} (CVSS {detail['cvss']})")
+    if detail["epss"] is not None:
+        lines.append(f"EPSS: {detail['epss']:.2f}")
+    if detail["kev"] is not None:
+        lines.append(f"CISA KEV: {'yes' if detail['kev'] else 'no'}")
+    if detail["installed_version"] is not None:
+        lines.append(f"Installed version: {detail['installed_version']}")
+
+    lines.append("Reasons: " + "; ".join(detail["reasons"]))
+
+    fixable = "yes" if detail["auto_fixable"] else "no"
+    if detail["fixed_version"]:
+        fixable += f" (fixed version {detail['fixed_version']})"
+    lines.append(f"Auto-fixable: {fixable}")
+
+    return "\n".join(lines)
