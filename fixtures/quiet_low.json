@@ -1,0 +1,14 @@
+[
+  {
+    "cve": "CVE-2021-33503",
+    "package": "urllib3",
+    "installed_version": "1.26.4",
+    "fixed_version": "1.26.5",
+    "severity": "low",
+    "cvss": 3.7,
+    "epss": 0.01,
+    "kev": false,
+    "scanner": "trivy",
+    "repo": "acme/orders-api"
+  }
+]

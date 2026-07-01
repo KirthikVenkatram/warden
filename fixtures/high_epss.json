@@ -1,0 +1,14 @@
+[
+  {
+    "cve": "CVE-2023-38545",
+    "package": "curl",
+    "installed_version": "8.3.0",
+    "fixed_version": "8.4.0",
+    "severity": "high",
+    "cvss": 8.8,
+    "epss": 0.42,
+    "kev": false,
+    "scanner": "trivy",
+    "repo": "acme/orders-api"
+  }
+]
