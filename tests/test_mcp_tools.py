@@ -47,7 +47,12 @@ def test_explain_finding_missing_cve_reports_no_stored_finding():
     assert "No stored finding" in explanation
 
 
-def test_draft_fix_pr_returns_stub():
+def test_draft_fix_pr_skips_without_crashing_when_token_unset(monkeypatch):
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    scan_repo("acme/orders-api", "fixture:kev_blocking", tests_green=True)
+
     result = draft_fix_pr("CVE-2021-44228", "acme/orders-api")
 
-    assert result == {"status": "not_implemented", "cve": "CVE-2021-44228"}
+    assert result["status"] == "skipped"
+    assert result["cve"] == "CVE-2021-44228"
+    assert "GITHUB_TOKEN" in result["reason"]

@@ -51,10 +51,12 @@ def draft_fix_pr(cve: str, repo: str) -> dict:
 
     Only call this for findings whose policy decision is "auto" or "ask" (never for
     "block" — the autonomy ladder does not permit fixing a blocked finding this way)
-    and where auto_fixable is true. Not yet implemented: returns a stub result so the
-    tool is callable; real PR creation lands in a later chunk.
+    and where auto_fixable is true. Python/requirements.txt repos only. Returns a
+    PRResult: status ("opened", "reused", or "skipped" with a reason), url, and number.
+    Never raises — a missing GITHUB_TOKEN, missing requirements.txt, or unmatched pin
+    all come back as a clear "skipped" result instead of an error.
     """
-    return {"status": "not_implemented", "cve": cve}
+    return pipeline.draft_fix_pr(cve, repo).model_dump(mode="json")
 
 
 if __name__ == "__main__":

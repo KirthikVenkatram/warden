@@ -2,8 +2,8 @@ import json
 from collections import Counter
 from pathlib import Path
 
-from core import enrich, policy, scanner, store
-from core.models import Decision, ScanSummary
+from core import enrich, github_pr, policy, scanner, store
+from core.models import Decision, PRResult, ScanSummary
 
 _FIXTURES_DIR = Path(__file__).resolve().parent.parent / "fixtures"
 
@@ -73,3 +73,37 @@ def explain_finding(cve: str, repo: str) -> str:
     lines.append(f"Auto-fixable: {fixable}")
 
     return "\n".join(lines)
+
+
+def draft_fix_pr(cve: str, repo: str) -> PRResult:
+    """Look up the stored finding for cve+repo and open a fix PR for it.
+
+    Thin orchestration: no stored finding, or no fixed version on file, skips without
+    touching GitHub. Otherwise hands off to github_pr.open_fix_pr, which itself skips
+    safely (rather than raising) if GITHUB_TOKEN is unset or the pin can't be found.
+    """
+    detail = store.get_finding_detail(cve, repo)
+    if detail is None:
+        return PRResult(
+            cve=cve,
+            package="",
+            repo=repo,
+            status="skipped",
+            reason=f"No stored finding for {cve} in {repo}. Run scan_repo first.",
+        )
+    if not detail.get("fixed_version"):
+        return PRResult(
+            cve=cve,
+            package=detail["package"],
+            repo=repo,
+            status="skipped",
+            reason="No fixed version available for this finding.",
+        )
+
+    return github_pr.open_fix_pr(
+        repo=repo,
+        cve=cve,
+        package=detail["package"],
+        installed_version=detail["installed_version"],
+        fixed_version=detail["fixed_version"],
+    )

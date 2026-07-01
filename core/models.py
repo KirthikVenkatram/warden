@@ -52,8 +52,10 @@ class PRResult(BaseModel):
     cve: str
     package: str
     repo: str
-    branch: str
-    fixed_version: str
-    url: str
-    number: int
+    status: str  # "opened" | "reused" | "skipped"
+    branch: str | None = None
+    fixed_version: str | None = None
+    url: str | None = None
+    number: int | None = None
     merged: bool = False
+    reason: str | None = None
