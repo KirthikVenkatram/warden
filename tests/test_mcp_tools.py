@@ -26,16 +26,16 @@ def test_get_findings_filters_by_action():
     autos = get_findings("acme/orders-api", action="auto")
 
     assert len(blocked) == 1
-    assert blocked[0]["cve"] == "CVE-2021-44228"
+    assert blocked[0]["cve"] == "CVE-2026-42208"
     assert autos == []
 
 
 def test_explain_finding_contains_cve_severity_kev_and_policy_reason():
     scan_repo("acme/orders-api", "fixture:kev_blocking", tests_green=True)
 
-    explanation = explain_finding("CVE-2021-44228", "acme/orders-api")
+    explanation = explain_finding("CVE-2026-42208", "acme/orders-api")
 
-    assert "CVE-2021-44228" in explanation
+    assert "CVE-2026-42208" in explanation
     assert "critical" in explanation
     assert "CISA KEV: yes" in explanation
     assert "known exploited in the wild" in explanation
@@ -51,8 +51,8 @@ def test_draft_fix_pr_skips_without_crashing_when_token_unset(monkeypatch):
     monkeypatch.delenv("GITHUB_TOKEN", raising=False)
     scan_repo("acme/orders-api", "fixture:kev_blocking", tests_green=True)
 
-    result = draft_fix_pr("CVE-2021-44228", "acme/orders-api")
+    result = draft_fix_pr("CVE-2026-42208", "acme/orders-api")
 
     assert result["status"] == "skipped"
-    assert result["cve"] == "CVE-2021-44228"
+    assert result["cve"] == "CVE-2026-42208"
     assert "GITHUB_TOKEN" in result["reason"]

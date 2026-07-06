@@ -13,7 +13,7 @@ def _b64(text: str) -> str:
 
 def _make_client(requirements_text: str, calls: list, existing_pr: dict | None = None) -> httpx.Client:
     repo = "acme/orders-api"
-    branch = "warden/fix-cve-2023-38545"
+    branch = "warden/fix-cve-2026-42208"
 
     def handler(request: httpx.Request) -> httpx.Response:
         calls.append(request)
@@ -61,10 +61,10 @@ def isolate_db(tmp_path, monkeypatch):
 
 def test_open_fix_pr_rewrites_version_line_in_committed_payload():
     calls: list[httpx.Request] = []
-    client = _make_client("requests==2.31.0\ncurl==8.3.0\nflask==2.0.1\n", calls)
+    client = _make_client("requests==2.31.0\nlitellm==1.83.6\nflask==2.0.1\n", calls)
 
     result = github_pr.open_fix_pr(
-        "acme/orders-api", "CVE-2023-38545", "curl", "8.3.0", "8.4.0", client=client
+        "acme/orders-api", "CVE-2026-42208", "litellm", "1.83.6", "1.83.7", client=client
     )
 
     assert result.status == "opened"
@@ -75,10 +75,10 @@ def test_open_fix_pr_rewrites_version_line_in_committed_payload():
     payload = json.loads(put_call.content)
     committed = base64.b64decode(payload["content"]).decode()
 
-    assert "curl==8.4.0" in committed
+    assert "litellm==1.83.7" in committed
     assert "requests==2.31.0" in committed
     assert "flask==2.0.1" in committed
-    assert "curl==8.3.0" not in committed
+    assert "litellm==1.83.6" not in committed
 
 
 def test_open_fix_pr_missing_pin_is_skipped():
@@ -86,11 +86,11 @@ def test_open_fix_pr_missing_pin_is_skipped():
     client = _make_client("requests==2.31.0\n", calls)
 
     result = github_pr.open_fix_pr(
-        "acme/orders-api", "CVE-2023-38545", "curl", "8.3.0", "8.4.0", client=client
+        "acme/orders-api", "CVE-2026-42208", "litellm", "1.83.6", "1.83.7", client=client
     )
 
     assert result.status == "skipped"
-    assert "curl" in result.reason
+    assert "litellm" in result.reason
     assert not any(c.method == "PUT" for c in calls)
     assert not any(c.method == "POST" and c.url.path.endswith("/pulls") for c in calls)
 
@@ -98,10 +98,10 @@ def test_open_fix_pr_missing_pin_is_skipped():
 def test_open_fix_pr_reuses_existing_open_pr():
     calls: list[httpx.Request] = []
     existing = {"html_url": "https://github.com/acme/orders-api/pull/7", "number": 7}
-    client = _make_client("curl==8.3.0\n", calls, existing_pr=existing)
+    client = _make_client("litellm==1.83.6\n", calls, existing_pr=existing)
 
     result = github_pr.open_fix_pr(
-        "acme/orders-api", "CVE-2023-38545", "curl", "8.3.0", "8.4.0", client=client
+        "acme/orders-api", "CVE-2026-42208", "litellm", "1.83.6", "1.83.7", client=client
     )
 
     assert result.status == "reused"
@@ -113,7 +113,7 @@ def test_open_fix_pr_reuses_existing_open_pr():
 def test_open_fix_pr_missing_token_is_skipped(monkeypatch):
     monkeypatch.delenv("GITHUB_TOKEN", raising=False)
 
-    result = github_pr.open_fix_pr("acme/orders-api", "CVE-2023-38545", "curl", "8.3.0", "8.4.0")
+    result = github_pr.open_fix_pr("acme/orders-api", "CVE-2026-42208", "litellm", "1.83.6", "1.83.7")
 
     assert result.status == "skipped"
     assert "GITHUB_TOKEN" in result.reason

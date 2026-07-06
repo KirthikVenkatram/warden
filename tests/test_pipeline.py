@@ -19,7 +19,7 @@ def test_kev_blocking_fixture_lands_as_block():
     assert summary.ignore == 0
 
     [decision] = pipeline.get_decisions("acme/orders-api")
-    assert decision.cve == "CVE-2021-44228"
+    assert decision.cve == "CVE-2026-42208"
     assert decision.action == "block"
 
 
