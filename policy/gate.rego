@@ -105,10 +105,18 @@ block_reasons(finding) := reasons if {
 
 ask_reasons(finding) := reasons if {
 	extra := array.concat(
-		[r |
-			not low_risk(finding)
-			r := sprintf("severity %s / EPSS %.2f is above the low-risk threshold", [finding.severity, finding.epss])
-		],
+		array.concat(
+			[r |
+				not low_risk(finding)
+				finding.severity in {"high", "critical"}
+				r := sprintf("severity %s is not eligible for auto-remediation regardless of EPSS (EPSS %.2f)", [finding.severity, finding.epss])
+			],
+			[r |
+				not low_risk(finding)
+				finding.severity in {"low", "medium"}
+				r := sprintf("EPSS %.2f meets or exceeds the low-risk threshold %.2f at %s severity", [finding.epss, epss_block_threshold, finding.severity])
+			],
+		),
 		[r |
 			input.tests_green != true
 			r := "automated tests are not green"
