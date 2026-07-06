@@ -1,14 +1,14 @@
 [
   {
-    "cve": "CVE-2023-38545",
-    "package": "curl",
-    "installed_version": "8.3.0",
-    "fixed_version": "8.4.0",
+    "cve": "CVE-2021-33503",
+    "package": "urllib3",
+    "installed_version": "1.26.4",
+    "fixed_version": "1.26.5",
     "severity": "high",
-    "cvss": 8.8,
-    "epss": 0.42,
+    "cvss": 7.5,
+    "epss": 0.02,
     "kev": false,
     "scanner": "trivy",
-    "repo": "acme/orders-api"
+    "repo": "KirthikVenkatram/warden-demo-target"
   }
 ]

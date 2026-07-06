@@ -1,14 +1,14 @@
 [
   {
-    "cve": "CVE-2021-44228",
-    "package": "log4j-core",
-    "installed_version": "2.14.1",
-    "fixed_version": "2.17.1",
+    "cve": "CVE-2026-42208",
+    "package": "litellm",
+    "installed_version": "1.83.6",
+    "fixed_version": "1.83.7",
     "severity": "critical",
-    "cvss": 10.0,
-    "epss": 0.97,
+    "cvss": 9.3,
+    "epss": 0.85,
     "kev": true,
     "scanner": "trivy",
-    "repo": "acme/orders-api"
+    "repo": "KirthikVenkatram/warden-demo-target"
   }
 ]
