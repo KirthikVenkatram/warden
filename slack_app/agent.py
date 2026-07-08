@@ -8,16 +8,19 @@ explains what the policy gate already decided; it cannot act on the user's behal
 import json
 import logging
 import os
+import time
 
 from google import genai
-from google.genai import types
+from google.genai import errors, types
 
 from core import pipeline, store
 
 logger = logging.getLogger(__name__)
 
-_MODEL = "gemini-2.0-flash"
+_MODEL = "gemini-flash-latest"
 _MAX_ITERATIONS = 5
+_MAX_RETRIES = 3
+_RETRY_BACKOFF_SECONDS = 1
 
 _SYSTEM_PROMPT = (
     "You are Warden, a security triage agent. Answer concisely using ONLY the "
@@ -100,6 +103,17 @@ def _extract_function_calls(response) -> list:
     return [part.function_call for part in parts if getattr(part, "function_call", None)]
 
 
+def _generate_content_with_retry(client, **kwargs):
+    """Retry transient Gemini server errors (e.g. 503 UNAVAILABLE) with backoff."""
+    for attempt in range(_MAX_RETRIES):
+        try:
+            return client.models.generate_content(**kwargs)
+        except errors.ServerError:
+            if attempt == _MAX_RETRIES - 1:
+                raise
+            time.sleep(_RETRY_BACKOFF_SECONDS * (2**attempt))
+
+
 def answer_question(question: str, context: str, tools: list[dict], tool_dispatch: dict) -> str:
     """Run a Gemini function-calling loop and return the final text answer.
 
@@ -120,7 +134,11 @@ def answer_question(question: str, context: str, tools: list[dict], tool_dispatc
     ]
 
     for _ in range(_MAX_ITERATIONS):
-        response = client.models.generate_content(model=_MODEL, contents=contents, config=config)
+        try:
+            response = _generate_content_with_retry(client, model=_MODEL, contents=contents, config=config)
+        except errors.ServerError:
+            logger.exception("Gemini generate_content failed after retries")
+            return "Q&A temporarily unavailable, try again."
 
         function_calls = _extract_function_calls(response)
         if not function_calls:

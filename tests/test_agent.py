@@ -30,7 +30,10 @@ class FakeModels:
 
     def generate_content(self, **kwargs):
         self.calls.append(kwargs)
-        return self._responses.pop(0)
+        response = self._responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response
 
 
 class FakeClient:
@@ -90,6 +93,22 @@ def test_iteration_cap_terminates_runaway_tool_use(monkeypatch):
 
     assert len(fake_client.models.calls) == agent._MAX_ITERATIONS
     assert "tool-call budget" in answer
+
+
+def _server_error():
+    return agent.errors.ServerError(503, {"error": {"status": "UNAVAILABLE", "message": "high demand"}})
+
+
+def test_retries_on_server_error_then_succeeds(monkeypatch):
+    final_response = _response([_text_part("all clear.")], text="all clear.")
+    fake_client = FakeClient([_server_error(), _server_error(), final_response])
+    monkeypatch.setattr(agent.genai, "Client", lambda **kwargs: fake_client)
+    monkeypatch.setattr(agent.time, "sleep", lambda seconds: None)
+
+    answer = agent.answer_question("why?", "Repo: org/repo", agent.build_tools(), {})
+
+    assert answer == "all clear."
+    assert len(fake_client.models.calls) == 3
 
 
 def test_missing_api_key_returns_short_message(monkeypatch):
