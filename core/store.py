@@ -160,6 +160,49 @@ def get_decisions(repo: str, action: str | None = None) -> list[Decision]:
     ]
 
 
+def get_render_rows(repo: str, action: str | None = None) -> list[dict]:
+    """Return full render rows (decision + enrichment) for repo, excluding snoozed findings.
+
+    Same dict shape as get_finding_detail, one per stored finding — the data
+    slack_app.blockkit.build_digest needs without N per-cve lookups.
+    """
+    query = """
+        SELECT f.cve, f.package, f.action, f.reasons, f.auto_fixable,
+               f.severity, f.cvss, f.epss, f.kev, f.installed_version, f.fixed_version
+        FROM findings f
+        LEFT JOIN snoozes s ON s.cve = f.cve AND s.repo = f.repo
+        WHERE f.repo = ? AND (s.until_ts IS NULL OR s.until_ts <= ?)
+    """
+    params: list = [repo, time.time()]
+    if action is not None:
+        query += " AND f.action = ?"
+        params.append(action)
+
+    conn = _connect()
+    try:
+        rows = conn.execute(query, params).fetchall()
+    finally:
+        conn.close()
+
+    return [
+        {
+            "cve": cve,
+            "repo": repo,
+            "package": package,
+            "action": action_,
+            "reasons": json.loads(reasons),
+            "auto_fixable": bool(auto_fixable),
+            "severity": severity,
+            "cvss": cvss,
+            "epss": epss,
+            "kev": bool(kev) if kev is not None else None,
+            "installed_version": installed_version,
+            "fixed_version": fixed_version,
+        }
+        for cve, package, action_, reasons, auto_fixable, severity, cvss, epss, kev, installed_version, fixed_version in rows
+    ]
+
+
 def get_finding_detail(cve: str, repo: str) -> dict | None:
     """Return the stored decision for cve+repo plus its enrichment context, or None.
 
