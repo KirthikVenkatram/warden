@@ -18,7 +18,6 @@ _ACTION_EMOJI = {
     "ignore": ":white_circle:",
 }
 _ACTION_ORDER = {"block": 0, "ask": 1, "auto": 2, "ignore": 3}
-_ACTION_LABEL = {"block": "blocked", "ask": "needs approval", "auto": "auto-fixed", "ignore": "ignored"}
 
 _MAX_BLOCKS = 50
 _MAX_SECTION_CHARS = 3000
@@ -33,15 +32,6 @@ def _truncate(text: str, limit: int = _MAX_SECTION_CHARS) -> str:
     if len(text) <= limit:
         return text
     return text[: limit - 1] + "…"
-
-
-def _count_line(summary: ScanSummary) -> str:
-    parts = []
-    for action in ("block", "ask", "auto", "ignore"):
-        count = getattr(summary, action)
-        if count:
-            parts.append(f"{count} {_ACTION_LABEL[action]}")
-    return " · ".join(parts) if parts else "no findings"
 
 
 def _finding_text(finding: dict) -> str:
@@ -63,6 +53,7 @@ def _finding_text(finding: dict) -> str:
         details.append(f"EPSS {epss * 100:.0f}%")
     if finding.get("kev"):
         details.append(":rotating_light: KEV")
+    details.append(f"<https://nvd.nist.gov/vuln/detail/{cve}|details>")
 
     text = f"{emoji} *{package}* — *{cve}*\n" + " · ".join(details)
     return _truncate(text)
@@ -150,7 +141,20 @@ def build_digest(summary: ScanSummary, decisions: list[dict], overrides: dict[st
     blocks: list[dict] = [
         {
             "type": "header",
-            "text": {"type": "plain_text", "text": f"{summary.repo} — {_count_line(summary)}"},
+            "text": {"type": "plain_text", "text": f":shield: Warden — {summary.repo}"},
+        },
+        {
+            "type": "context",
+            "elements": [
+                {
+                    "type": "mrkdwn",
+                    "text": (
+                        f"{summary.total} findings · {summary.block} blocked · "
+                        f"{summary.ask} need approval · {summary.auto} auto-fixed · "
+                        "scanned just now"
+                    ),
+                }
+            ],
         },
         {"type": "divider"},
     ]

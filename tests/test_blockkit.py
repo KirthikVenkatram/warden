@@ -71,11 +71,16 @@ def test_digest_header_count_line():
     msg = build_digest(SUMMARY, [BLOCK_FINDING, ASK_FINDING, AUTO_FINDING, IGNORE_FINDING])
     header = msg["blocks"][0]
     assert header["type"] == "header"
-    text = header["text"]["text"]
+    assert header["text"]["text"] == ":shield: Warden — ubixi/conductor"
+
+    context = msg["blocks"][1]
+    assert context["type"] == "context"
+    text = context["elements"][0]["text"]
+    assert "4 findings" in text
     assert "1 blocked" in text
-    assert "1 needs approval" in text
+    assert "1 need approval" in text
     assert "1 auto-fixed" in text
-    assert "1 ignored" in text
+    assert "scanned just now" in text
 
 
 def test_block_finding_has_no_approve_button():
