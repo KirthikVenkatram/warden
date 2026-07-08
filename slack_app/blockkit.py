@@ -7,8 +7,9 @@ optional "pr_url" for auto-remediated findings.
 """
 
 import json
+from datetime import datetime, timezone
 
-from core.models import ScanSummary
+from core.models import PRResult, ScanSummary
 
 _ACTION_EMOJI = {
     "block": ":red_circle:",
@@ -135,12 +136,16 @@ def _finding_blocks(finding: dict, repo: str) -> list[dict]:
     return blocks
 
 
-def build_digest(summary: ScanSummary, decisions: list[dict]) -> dict:
+def build_digest(summary: ScanSummary, decisions: list[dict], overrides: dict[str, list[dict]] | None = None) -> dict:
     """Build a Block Kit digest message for a scan's findings.
 
     `decisions` items follow the core.store.get_finding_detail shape (see module
     docstring). Findings are ordered block, ask, auto, ignore. Respects Slack's
     50-block and ~3000-char-per-section limits, truncating and noting overflow.
+
+    `overrides` maps a cve to a pre-built list of blocks to use in place of the
+    normal render — how a button action (approve/snooze) can transform a single
+    card in-place while every other finding's blocks stay exactly as before.
     """
     blocks: list[dict] = [
         {
@@ -154,7 +159,8 @@ def build_digest(summary: ScanSummary, decisions: list[dict]) -> dict:
 
     rendered = 0
     for finding in ordered:
-        finding_blocks = _finding_blocks(finding, summary.repo)
+        override = (overrides or {}).get(finding["cve"])
+        finding_blocks = override if override is not None else _finding_blocks(finding, summary.repo)
         if len(blocks) + len(finding_blocks) > _MAX_BLOCKS - 1:
             break
         blocks.extend(finding_blocks)
@@ -172,6 +178,41 @@ def build_digest(summary: ScanSummary, decisions: list[dict]) -> dict:
         )
 
     return {"blocks": blocks}
+
+
+def build_approved_card(finding: dict, pr_result: PRResult) -> list[dict]:
+    """Blocks for a card whose fix was just approved — buttons replaced by PR status.
+
+    Finding text is unchanged; only the actions row becomes a context line, so the
+    approve click is visible in-channel without touching any other card.
+    """
+    if pr_result.status == "skipped":
+        line = f":warning: {pr_result.reason}"
+    else:
+        line = f":hourglass_flowing_sand: Fix PR opened → <{pr_result.url}|view PR>"
+
+    return [
+        {
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": _finding_text(finding)},
+        },
+        {"type": "context", "elements": [{"type": "mrkdwn", "text": line}]},
+    ]
+
+
+def build_snoozed_card(finding: dict, until_ts: float) -> list[dict]:
+    """Blocks for a card whose finding was just snoozed — buttons replaced by a snooze note."""
+    until = datetime.fromtimestamp(until_ts, tz=timezone.utc).strftime("%Y-%m-%d")
+    return [
+        {
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": _finding_text(finding)},
+        },
+        {
+            "type": "context",
+            "elements": [{"type": "mrkdwn", "text": f":zzz: snoozed until {until}"}],
+        },
+    ]
 
 
 def build_detail(detail: dict) -> dict:
