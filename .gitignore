@@ -9,3 +9,4 @@ bin/opa
 .mypy_cache/
 .DS_Store
 .cache/
+warden.env
