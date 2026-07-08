@@ -1,4 +1,4 @@
-"""Anthropic tool-use loop for in-thread Q&A about a scan's findings.
+"""Gemini tool-use loop for in-thread Q&A about a scan's findings.
 
 Read-only by design: the bound tools mirror scan_repo's already-stored decisions
 (get_findings, explain_finding, get_finding_detail) but never draft_fix_pr. The agent
@@ -9,15 +9,15 @@ import json
 import logging
 import os
 
-import anthropic
+from google import genai
+from google.genai import types
 
 from core import pipeline, store
 
 logger = logging.getLogger(__name__)
 
-_MODEL = "claude-sonnet-4-6"
+_MODEL = "gemini-2.0-flash"
 _MAX_ITERATIONS = 5
-_MAX_TOKENS = 1024
 
 _SYSTEM_PROMPT = (
     "You are Warden, a security triage agent. Answer concisely using ONLY the "
@@ -28,7 +28,7 @@ _SYSTEM_PROMPT = (
 
 
 def build_tools() -> list[dict]:
-    """Anthropic tool schemas for the read-only subset of core Warden can answer with."""
+    """Gemini function declarations for the read-only subset of core Warden can answer with."""
     return [
         {
             "name": "get_findings",
@@ -36,7 +36,7 @@ def build_tools() -> list[dict]:
                 "List stored policy decisions for a repo, optionally filtered by "
                 "action (auto/ask/block/ignore). Snoozed findings are excluded."
             ),
-            "input_schema": {
+            "parameters": {
                 "type": "object",
                 "properties": {
                     "repo": {"type": "string"},
@@ -48,7 +48,7 @@ def build_tools() -> list[dict]:
         {
             "name": "explain_finding",
             "description": "Explain, in plain language, why a specific finding got the policy action it did.",
-            "input_schema": {
+            "parameters": {
                 "type": "object",
                 "properties": {"cve": {"type": "string"}, "repo": {"type": "string"}},
                 "required": ["cve", "repo"],
@@ -60,7 +60,7 @@ def build_tools() -> list[dict]:
                 "Return the stored decision plus enrichment (severity, cvss, epss, kev, "
                 "installed/fixed versions) for a specific cve+repo."
             ),
-            "input_schema": {
+            "parameters": {
                 "type": "object",
                 "properties": {"cve": {"type": "string"}, "repo": {"type": "string"}},
                 "required": ["cve", "repo"],
@@ -84,58 +84,67 @@ def build_tool_dispatch() -> dict:
     }
 
 
-def _extract_text(content: list) -> str:
-    parts = [block.text for block in content if getattr(block, "type", None) == "text"]
-    return "\n".join(parts).strip() or "I don't have an answer for that."
+def _to_function_declarations(tools: list[dict]) -> list[types.FunctionDeclaration]:
+    return [
+        types.FunctionDeclaration(
+            name=tool["name"],
+            description=tool["description"],
+            parameters=tool["parameters"],
+        )
+        for tool in tools
+    ]
+
+
+def _extract_function_calls(response) -> list:
+    parts = getattr(response.candidates[0].content, "parts", []) if response.candidates else []
+    return [part.function_call for part in parts if getattr(part, "function_call", None)]
 
 
 def answer_question(question: str, context: str, tools: list[dict], tool_dispatch: dict) -> str:
-    """Run an Anthropic Messages tool-use loop and return the final text answer.
+    """Run a Gemini function-calling loop and return the final text answer.
 
     Calls the model, dispatches any requested tool to tool_dispatch, feeds the result
     back, and repeats until the model answers with text or _MAX_ITERATIONS is hit
     (in which case it returns a short fallback rather than looping forever).
     """
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        return "Q&A not configured — ANTHROPIC_API_KEY is not set."
+    if not os.environ.get("GEMINI_API_KEY"):
+        return "Q&A not configured — GEMINI_API_KEY is not set."
 
-    client = anthropic.Anthropic()
-    messages: list[dict] = [{"role": "user", "content": f"{context}\n\nQuestion: {question}"}]
+    client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+    config = types.GenerateContentConfig(
+        tools=[types.Tool(function_declarations=_to_function_declarations(tools))],
+        system_instruction=_SYSTEM_PROMPT,
+    )
+    contents: list = [
+        types.Content(role="user", parts=[types.Part.from_text(text=f"{context}\n\nQuestion: {question}")])
+    ]
 
     for _ in range(_MAX_ITERATIONS):
-        response = client.messages.create(
-            model=_MODEL,
-            max_tokens=_MAX_TOKENS,
-            system=_SYSTEM_PROMPT,
-            tools=tools,
-            messages=messages,
-        )
+        response = client.models.generate_content(model=_MODEL, contents=contents, config=config)
 
-        if response.stop_reason != "tool_use":
-            return _extract_text(response.content)
+        function_calls = _extract_function_calls(response)
+        if not function_calls:
+            return (response.text or "").strip() or "I don't have an answer for that."
 
-        messages.append({"role": "assistant", "content": response.content})
+        contents.append(response.candidates[0].content)
 
-        tool_results = []
-        for block in response.content:
-            if getattr(block, "type", None) != "tool_use":
-                continue
-            func = tool_dispatch.get(block.name)
+        response_parts = []
+        for call in function_calls:
+            func = tool_dispatch.get(call.name)
             if func is None:
-                result = {"error": f"unknown tool {block.name}"}
+                result = {"error": f"unknown tool {call.name}"}
             else:
                 try:
-                    result = func(**block.input)
+                    result = func(**call.args)
                 except Exception as exc:
-                    logger.exception("tool %s failed", block.name)
+                    logger.exception("tool %s failed", call.name)
                     result = {"error": str(exc)}
-            tool_results.append(
-                {
-                    "type": "tool_result",
-                    "tool_use_id": block.id,
-                    "content": json.dumps(result, default=str),
-                }
+            response_parts.append(
+                types.Part.from_function_response(
+                    name=call.name,
+                    response={"result": json.loads(json.dumps(result, default=str))},
+                )
             )
-        messages.append({"role": "user", "content": tool_results})
+        contents.append(types.Content(role="user", parts=response_parts))
 
     return "I couldn't reach an answer within the tool-call budget — try rephrasing the question."
