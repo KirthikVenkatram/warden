@@ -67,3 +67,32 @@ def test_snooze_expiry_respected():
     decisions = store.get_decisions("org/repo")
     assert [d.cve for d in decisions] == ["CVE-1"]
     assert store.is_snoozed("CVE-1", "org/repo") is False
+
+
+def test_replace_findings_drops_stale_rows_from_prior_scan():
+    store.replace_findings("org/repo", [make_decision(cve="CVE-1"), make_decision(cve="CVE-2")])
+
+    store.replace_findings("org/repo", [make_decision(cve="CVE-2")])
+
+    assert [d.cve for d in store.get_decisions("org/repo")] == ["CVE-2"]
+
+
+def test_replace_findings_scopes_deletion_to_repo():
+    store.replace_findings("org/repo-a", [make_decision(cve="CVE-1")])
+    store.replace_findings("org/repo-b", [make_decision(cve="CVE-2")])
+
+    store.replace_findings("org/repo-a", [make_decision(cve="CVE-1")])
+
+    assert [d.cve for d in store.get_decisions("org/repo-a")] == ["CVE-1"]
+    assert [d.cve for d in store.get_decisions("org/repo-b")] == ["CVE-2"]
+
+
+def test_replace_findings_preserves_snooze_when_finding_reappears():
+    store.replace_findings("org/repo", [make_decision(cve="CVE-1")])
+    store.snooze("CVE-1", "org/repo", time.time() + 3600)
+
+    store.replace_findings("org/repo", [])
+    store.replace_findings("org/repo", [make_decision(cve="CVE-1")])
+
+    assert store.get_decisions("org/repo") == []
+    assert store.is_snoozed("CVE-1", "org/repo") is True

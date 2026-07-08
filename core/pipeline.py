@@ -24,7 +24,7 @@ def run_scan(repo: str, source: str, tests_green: bool = False, threshold: float
         findings = enrich.enrich(findings)
 
     decisions = policy.evaluate(findings, tests_green, threshold)
-    store.upsert_decisions(repo, decisions, findings)
+    store.replace_findings(repo, decisions, findings)
 
     counts = Counter(d.action.value for d in decisions)
     return ScanSummary(

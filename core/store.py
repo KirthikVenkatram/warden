@@ -50,6 +50,45 @@ def _connect() -> sqlite3.Connection:
     return conn
 
 
+def _upsert(conn: sqlite3.Connection, repo: str, decisions: list[Decision], findings: list[Finding] | None) -> None:
+    finding_by_key = {(f.cve, f.package): f for f in (findings or [])}
+    for decision in decisions:
+        finding = finding_by_key.get((decision.cve, decision.package))
+        conn.execute(
+            """
+            INSERT INTO findings (
+                cve, package, repo, action, reasons, auto_fixable,
+                severity, cvss, epss, kev, installed_version, fixed_version
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(cve, package, repo) DO UPDATE SET
+                action = excluded.action,
+                reasons = excluded.reasons,
+                auto_fixable = excluded.auto_fixable,
+                severity = excluded.severity,
+                cvss = excluded.cvss,
+                epss = excluded.epss,
+                kev = excluded.kev,
+                installed_version = excluded.installed_version,
+                fixed_version = excluded.fixed_version
+            """,
+            (
+                decision.cve,
+                decision.package,
+                repo,
+                decision.action.value,
+                json.dumps(decision.reasons),
+                int(decision.auto_fixable),
+                finding.severity.value if finding else None,
+                finding.cvss if finding else None,
+                finding.epss if finding else None,
+                int(finding.kev) if finding else None,
+                finding.installed_version if finding else None,
+                finding.fixed_version if finding else None,
+            ),
+        )
+
+
 def upsert_decisions(repo: str, decisions: list[Decision], findings: list[Finding] | None = None) -> None:
     """Insert or update decisions for repo, deduped on (cve, package, repo).
 
@@ -58,45 +97,27 @@ def upsert_decisions(repo: str, decisions: list[Decision], findings: list[Findin
     explain_finding can report the exact enrichment data behind a policy decision, not
     just its text reasons.
     """
-    finding_by_key = {(f.cve, f.package): f for f in (findings or [])}
     conn = _connect()
     try:
         with conn:
-            for decision in decisions:
-                finding = finding_by_key.get((decision.cve, decision.package))
-                conn.execute(
-                    """
-                    INSERT INTO findings (
-                        cve, package, repo, action, reasons, auto_fixable,
-                        severity, cvss, epss, kev, installed_version, fixed_version
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(cve, package, repo) DO UPDATE SET
-                        action = excluded.action,
-                        reasons = excluded.reasons,
-                        auto_fixable = excluded.auto_fixable,
-                        severity = excluded.severity,
-                        cvss = excluded.cvss,
-                        epss = excluded.epss,
-                        kev = excluded.kev,
-                        installed_version = excluded.installed_version,
-                        fixed_version = excluded.fixed_version
-                    """,
-                    (
-                        decision.cve,
-                        decision.package,
-                        repo,
-                        decision.action.value,
-                        json.dumps(decision.reasons),
-                        int(decision.auto_fixable),
-                        finding.severity.value if finding else None,
-                        finding.cvss if finding else None,
-                        finding.epss if finding else None,
-                        int(finding.kev) if finding else None,
-                        finding.installed_version if finding else None,
-                        finding.fixed_version if finding else None,
-                    ),
-                )
+            _upsert(conn, repo, decisions, findings)
+    finally:
+        conn.close()
+
+
+def replace_findings(repo: str, decisions: list[Decision], findings: list[Finding] | None = None) -> None:
+    """Make repo's stored findings exactly the current scan's set.
+
+    Deletes any findings previously stored for repo that aren't in this scan (so a
+    resolved vulnerability disappears rather than lingering from a prior scan), then
+    upserts the current set. The snoozes table is untouched, so a finding that was
+    snoozed and reappears in a later scan is still snoozed.
+    """
+    conn = _connect()
+    try:
+        with conn:
+            conn.execute("DELETE FROM findings WHERE repo = ?", (repo,))
+            _upsert(conn, repo, decisions, findings)
     finally:
         conn.close()
 
