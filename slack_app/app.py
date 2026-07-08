@@ -15,6 +15,7 @@ from slack_bolt.adapter.socket_mode import SocketModeHandler
 
 from core import pipeline, store
 from core.models import PRResult, ScanSummary
+from slack_app import agent
 from slack_app.blockkit import build_approved_card, build_detail, build_digest, build_snoozed_card
 
 logger = logging.getLogger(__name__)
@@ -98,6 +99,24 @@ def build_snooze_update(repo: str, rows: list[dict], finding: dict, until_ts: fl
     overrides = {finding["cve"]: build_snoozed_card(finding, until_ts)}
     summary = _summary_from_rows(repo, combined)
     return build_digest(summary, combined, overrides=overrides)
+
+
+def parse_repo_from_digest(parent_message: dict | None) -> str | None:
+    """Return the repo a Warden digest message is for, or None if it isn't one.
+
+    A digest's first block is always a "{repo} — {count line}" header (see
+    blockkit.build_digest) — that's the only signal we have that a thread's parent
+    was posted by Warden, since Socket Mode doesn't persist a ts->repo mapping.
+    """
+    if not parent_message:
+        return None
+    blocks = parent_message.get("blocks") or []
+    if not blocks or blocks[0].get("type") != "header":
+        return None
+    text = blocks[0].get("text", {}).get("text", "")
+    if " — " not in text:
+        return None
+    return text.split(" — ", 1)[0].strip()
 
 
 def _fallback_text(repo: str, summary) -> str:
@@ -194,6 +213,39 @@ def create_app() -> App:
             return
 
         respond(replace_original=True, text=_fallback_text(repo, _summary_from_rows(repo, rows)), blocks=update["blocks"])
+
+    @app.event("message")
+    def handle_thread_question(event, client):
+        if event.get("bot_id") or event.get("subtype"):
+            return
+
+        thread_ts = event.get("thread_ts")
+        if not thread_ts or thread_ts == event.get("ts"):
+            return  # not a reply inside a thread
+
+        question = (event.get("text") or "").strip()
+        if not question:
+            return
+
+        channel = event["channel"]
+        try:
+            replies = client.conversations_replies(channel=channel, ts=thread_ts, limit=1)
+        except Exception:
+            logger.exception("failed to fetch parent message for thread %s", thread_ts)
+            return
+
+        parent = (replies.get("messages") or [None])[0]
+        repo = parse_repo_from_digest(parent)
+        if repo is None:
+            return  # thread's parent isn't a Warden digest
+
+        answer = agent.answer_question(
+            question,
+            f"Repo: {repo}",
+            agent.build_tools(),
+            agent.build_tool_dispatch(),
+        )
+        client.chat_postMessage(channel=channel, thread_ts=thread_ts, text=answer)
 
     return app
 

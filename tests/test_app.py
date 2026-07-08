@@ -1,6 +1,6 @@
 from core import store
 from core.models import Action, Decision, Finding, Severity
-from slack_app.app import parse_scan_command
+from slack_app.app import parse_repo_from_digest, parse_scan_command
 
 
 def test_parses_bare_repo():
@@ -77,3 +77,21 @@ def test_get_render_rows_against_seeded_store(tmp_path, monkeypatch):
     assert row["kev"] is True
 
     assert store.get_render_rows("acme/orders-api", action="auto") == []
+
+
+def test_parse_repo_from_digest_extracts_repo():
+    parent = {
+        "blocks": [
+            {"type": "header", "text": {"type": "plain_text", "text": "acme/orders-api — 1 blocked"}},
+        ]
+    }
+    assert parse_repo_from_digest(parent) == "acme/orders-api"
+
+
+def test_parse_repo_from_digest_rejects_non_digest_message():
+    assert parse_repo_from_digest(None) is None
+    assert parse_repo_from_digest({"blocks": []}) is None
+    assert parse_repo_from_digest({"text": "just a regular reply"}) is None
+    assert parse_repo_from_digest(
+        {"blocks": [{"type": "section", "text": {"type": "mrkdwn", "text": "hi"}}]}
+    ) is None
