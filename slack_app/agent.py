@@ -1,4 +1,4 @@
-"""Gemini tool-use loop for in-thread Q&A about a scan's findings.
+"""Groq tool-use loop for in-thread Q&A about a scan's findings.
 
 Read-only by design: the bound tools mirror scan_repo's already-stored decisions
 (get_findings, explain_finding, get_finding_detail) but never draft_fix_pr. The agent
@@ -10,14 +10,14 @@ import logging
 import os
 import time
 
-from google import genai
-from google.genai import errors, types
+import groq
+from groq import Groq
 
 from core import pipeline, store
 
 logger = logging.getLogger(__name__)
 
-_MODEL = "gemini-flash-latest"
+_MODEL = "openai/gpt-oss-20b"
 _MAX_ITERATIONS = 5
 _MAX_RETRIES = 3
 _RETRY_BACKOFF_SECONDS = 1
@@ -31,42 +31,51 @@ _SYSTEM_PROMPT = (
 
 
 def build_tools() -> list[dict]:
-    """Gemini function declarations for the read-only subset of core Warden can answer with."""
+    """OpenAI-style function-tool definitions for the read-only subset of core Warden can answer with."""
     return [
         {
-            "name": "get_findings",
-            "description": (
-                "List stored policy decisions for a repo, optionally filtered by "
-                "action (auto/ask/block/ignore). Snoozed findings are excluded."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "repo": {"type": "string"},
-                    "action": {"type": "string", "enum": ["auto", "ask", "block", "ignore"]},
+            "type": "function",
+            "function": {
+                "name": "get_findings",
+                "description": (
+                    "List stored policy decisions for a repo, optionally filtered by "
+                    "action (auto/ask/block/ignore). Snoozed findings are excluded."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "repo": {"type": "string"},
+                        "action": {"type": "string", "enum": ["auto", "ask", "block", "ignore"]},
+                    },
+                    "required": ["repo"],
                 },
-                "required": ["repo"],
             },
         },
         {
-            "name": "explain_finding",
-            "description": "Explain, in plain language, why a specific finding got the policy action it did.",
-            "parameters": {
-                "type": "object",
-                "properties": {"cve": {"type": "string"}, "repo": {"type": "string"}},
-                "required": ["cve", "repo"],
+            "type": "function",
+            "function": {
+                "name": "explain_finding",
+                "description": "Explain, in plain language, why a specific finding got the policy action it did.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"cve": {"type": "string"}, "repo": {"type": "string"}},
+                    "required": ["cve", "repo"],
+                },
             },
         },
         {
-            "name": "get_finding_detail",
-            "description": (
-                "Return the stored decision plus enrichment (severity, cvss, epss, kev, "
-                "installed/fixed versions) for a specific cve+repo."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {"cve": {"type": "string"}, "repo": {"type": "string"}},
-                "required": ["cve", "repo"],
+            "type": "function",
+            "function": {
+                "name": "get_finding_detail",
+                "description": (
+                    "Return the stored decision plus enrichment (severity, cvss, epss, kev, "
+                    "installed/fixed versions) for a specific cve+repo."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {"cve": {"type": "string"}, "repo": {"type": "string"}},
+                    "required": ["cve", "repo"],
+                },
             },
         },
     ]
@@ -87,82 +96,71 @@ def build_tool_dispatch() -> dict:
     }
 
 
-def _to_function_declarations(tools: list[dict]) -> list[types.FunctionDeclaration]:
-    return [
-        types.FunctionDeclaration(
-            name=tool["name"],
-            description=tool["description"],
-            parameters=tool["parameters"],
-        )
-        for tool in tools
-    ]
-
-
-def _extract_function_calls(response) -> list:
-    parts = getattr(response.candidates[0].content, "parts", []) if response.candidates else []
-    return [part.function_call for part in parts if getattr(part, "function_call", None)]
-
-
-def _generate_content_with_retry(client, **kwargs):
-    """Retry transient Gemini server errors (e.g. 503 UNAVAILABLE) with backoff."""
+def _create_with_retry(client, **kwargs):
+    """Retry transient Groq server errors (5xx, 429) with backoff."""
     for attempt in range(_MAX_RETRIES):
         try:
-            return client.models.generate_content(**kwargs)
-        except errors.ServerError:
+            return client.chat.completions.create(**kwargs)
+        except groq.APIStatusError as exc:
+            if exc.status_code < 500 and exc.status_code != 429:
+                raise
             if attempt == _MAX_RETRIES - 1:
                 raise
             time.sleep(_RETRY_BACKOFF_SECONDS * (2**attempt))
 
 
 def answer_question(question: str, context: str, tools: list[dict], tool_dispatch: dict) -> str:
-    """Run a Gemini function-calling loop and return the final text answer.
+    """Run a Groq function-calling loop and return the final text answer.
 
     Calls the model, dispatches any requested tool to tool_dispatch, feeds the result
     back, and repeats until the model answers with text or _MAX_ITERATIONS is hit
     (in which case it returns a short fallback rather than looping forever).
     """
-    if not os.environ.get("GEMINI_API_KEY"):
-        return "Q&A not configured — GEMINI_API_KEY is not set."
+    if not os.environ.get("GROQ_API_KEY"):
+        return "Q&A not configured — GROQ_API_KEY is not set."
 
-    client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
-    config = types.GenerateContentConfig(
-        tools=[types.Tool(function_declarations=_to_function_declarations(tools))],
-        system_instruction=_SYSTEM_PROMPT,
-    )
-    contents: list = [
-        types.Content(role="user", parts=[types.Part.from_text(text=f"{context}\n\nQuestion: {question}")])
+    client = Groq(api_key=os.environ["GROQ_API_KEY"])
+    messages: list = [
+        {"role": "system", "content": _SYSTEM_PROMPT},
+        {"role": "user", "content": f"{context}\n\nQuestion: {question}"},
     ]
 
     for _ in range(_MAX_ITERATIONS):
         try:
-            response = _generate_content_with_retry(client, model=_MODEL, contents=contents, config=config)
-        except errors.ServerError:
-            logger.exception("Gemini generate_content failed after retries")
+            response = _create_with_retry(
+                client, model=_MODEL, messages=messages, tools=tools, tool_choice="auto"
+            )
+        except groq.APIStatusError:
+            logger.exception("Groq chat.completions.create failed after retries")
             return "Q&A temporarily unavailable, try again."
 
-        function_calls = _extract_function_calls(response)
-        if not function_calls:
-            return (response.text or "").strip() or "I don't have an answer for that."
+        message = response.choices[0].message
+        tool_calls = message.tool_calls or []
+        if not tool_calls:
+            return (message.content or "").strip() or "I don't have an answer for that."
 
-        contents.append(response.candidates[0].content)
+        messages.append(message)
 
-        response_parts = []
-        for call in function_calls:
-            func = tool_dispatch.get(call.name)
+        for call in tool_calls:
+            func = tool_dispatch.get(call.function.name)
+            try:
+                args = json.loads(call.function.arguments)
+            except (TypeError, json.JSONDecodeError):
+                args = {}
             if func is None:
-                result = {"error": f"unknown tool {call.name}"}
+                result = {"error": f"unknown tool {call.function.name}"}
             else:
                 try:
-                    result = func(**call.args)
+                    result = func(**args)
                 except Exception as exc:
-                    logger.exception("tool %s failed", call.name)
+                    logger.exception("tool %s failed", call.function.name)
                     result = {"error": str(exc)}
-            response_parts.append(
-                types.Part.from_function_response(
-                    name=call.name,
-                    response={"result": json.loads(json.dumps(result, default=str))},
-                )
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": call.id,
+                    "content": json.dumps(result, default=str),
+                }
             )
-        contents.append(types.Content(role="user", parts=response_parts))
 
     return "I couldn't reach an answer within the tool-call budget — try rephrasing the question."
