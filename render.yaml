@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: warden-slack
+    runtime: python
+    plan: free
+    buildCommand: pip install -e .
+    startCommand: python -m slack_app.app
+    healthCheckPath: /health
+    envVars:
+      - key: SLACK_BOT_TOKEN
+        sync: false
+      - key: SLACK_APP_TOKEN
+        sync: false
+      - key: GITHUB_TOKEN
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: WARDEN_DB
+        sync: false

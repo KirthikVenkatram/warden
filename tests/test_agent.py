@@ -103,6 +103,37 @@ def test_tool_dispatch_binds_repo_and_ignores_any_llm_supplied_repo(monkeypatch)
     assert seen == [("acme/orders-api", None)]
 
 
+def test_get_findings_treats_empty_string_action_as_no_filter(monkeypatch, tmp_path):
+    monkeypatch.setenv("WARDEN_DB", str(tmp_path / "warden.db"))
+    finding = Finding(
+        cve="CVE-2024-3094",
+        package="xz-utils",
+        installed_version="5.6.0",
+        fixed_version="5.6.2",
+        severity=Severity.CRITICAL,
+        cvss=10.0,
+        epss=0.94,
+        kev=True,
+        scanner="trivy",
+        repo="acme/orders-api",
+    )
+    decision = Decision(
+        cve="CVE-2024-3094",
+        package="xz-utils",
+        action=Action.BLOCK,
+        reasons=["on CISA KEV — known exploited in the wild"],
+        auto_fixable=True,
+    )
+    store.upsert_decisions("acme/orders-api", [decision], [finding])
+
+    dispatch = agent.build_tool_dispatch("acme/orders-api")
+
+    for action in ("", None):
+        result = dispatch["get_findings"](action=action)
+        assert len(result) == 1
+        assert result[0]["cve"] == "CVE-2024-3094"
+
+
 def test_iteration_cap_terminates_runaway_tool_use(monkeypatch):
     tool_call_response = _response(
         _message(tool_calls=[_tool_call("call_1", "get_findings", {})])

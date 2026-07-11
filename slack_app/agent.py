@@ -71,14 +71,19 @@ def build_tools() -> list[dict]:
             "function": {
                 "name": "get_findings",
                 "description": (
-                    "List stored policy decisions for the current repo, optionally filtered "
-                    "by action (auto/ask/block/ignore). Snoozed findings are excluded."
+                    "List stored policy decisions for the current repo. Snoozed findings are "
+                    "excluded. action: optional. Omit this argument entirely to return all "
+                    "findings. If provided, must be exactly one of auto, ask, block, ignore."
                 ),
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "action": {"type": "string", "enum": ["auto", "ask", "block", "ignore"]},
+                        "action": {
+                            "type": ["string", "null"],
+                            "enum": ["auto", "ask", "block", "ignore"],
+                        },
                     },
+                    "required": [],
                 },
             },
         },
@@ -112,6 +117,18 @@ def build_tools() -> list[dict]:
     ]
 
 
+_VALID_ACTIONS = {"auto", "ask", "block", "ignore"}
+
+
+def _sanitize_action(action: str | None) -> str | None:
+    """Coerce Groq's occasional {"action": ""} (meaning "no filter") to None.
+
+    Only a value from _VALID_ACTIONS is ever passed through to core — anything else
+    (None, "", or garbage) becomes None so an invalid value never reaches core.
+    """
+    return action if action in _VALID_ACTIONS else None
+
+
 def build_tool_dispatch(repo: str) -> dict:
     """Maps tool name -> callable(**kwargs) -> JSON-serializable result, bound to repo.
 
@@ -121,7 +138,7 @@ def build_tool_dispatch(repo: str) -> dict:
     """
     return {
         "get_findings": lambda action=None: [
-            d.model_dump(mode="json") for d in pipeline.get_decisions(repo, action)
+            d.model_dump(mode="json") for d in pipeline.get_decisions(repo, _sanitize_action(action))
         ],
         "explain_finding": lambda cve: pipeline.explain_finding(cve, repo),
         "get_finding_detail": lambda cve: store.get_finding_detail(cve, repo),

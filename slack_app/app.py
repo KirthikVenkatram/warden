@@ -7,6 +7,7 @@ module only parses the command text, calls them, and renders the result.
 import json
 import logging
 import os
+import threading
 import time
 from collections import Counter
 
@@ -15,13 +16,15 @@ from slack_bolt.adapter.socket_mode import SocketModeHandler
 
 from core import pipeline, store
 from core.models import PRResult, ScanSummary
-from slack_app import agent
+from slack_app import agent, health
 from slack_app.blockkit import build_approved_card, build_detail, build_digest, build_snoozed_card
 
 logger = logging.getLogger(__name__)
 
 _DEFAULT_SOURCE = "fixture:kev_blocking"
 _USAGE_HINT = "Usage: `/warden scan <owner/repo> [--source fixture:<name>] [--tests-green]`"
+_DEMO_REPO = "KirthikVenkatram/warden-demo-target"
+_DEMO_SOURCE = "fixture:demo_all"
 
 
 def parse_scan_command(text: str) -> dict | None:
@@ -252,8 +255,27 @@ def create_app() -> App:
     return app
 
 
+def _seed_demo_data_if_empty() -> None:
+    """Cold-start guard: an empty/missing WARDEN_DB means a fresh Render restart lost
+    its store (free tier has no persistent disk), so the digest would come up empty.
+    Re-run the demo fixture scan so there's always flagship data to show."""
+    db_path = store._db_path()
+    if db_path.exists():
+        return
+    logger.info("WARDEN_DB not found at %s — seeding demo data (%s) for %s", db_path, _DEMO_SOURCE, _DEMO_REPO)
+    pipeline.run_scan(_DEMO_REPO, _DEMO_SOURCE, tests_green=True)
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO)
+
+    _seed_demo_data_if_empty()
+
+    port = int(os.environ.get("PORT", "10000"))
+    health_thread = threading.Thread(target=health.run, args=(port,), daemon=True)
+    health_thread.start()
+    logger.info("health server listening on :%d/health", port)
+
     app = create_app()
     handler = SocketModeHandler(app, os.environ["SLACK_APP_TOKEN"])
     logger.info("connected")
