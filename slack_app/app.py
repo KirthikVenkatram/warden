@@ -239,11 +239,13 @@ def create_app() -> App:
         if repo is None:
             return  # thread's parent isn't a Warden digest
 
+        rows = store.get_render_rows(repo)
+        context = agent.build_context(repo, rows)
         answer = agent.answer_question(
             question,
-            f"Repo: {repo}",
+            context,
             agent.build_tools(),
-            agent.build_tool_dispatch(),
+            agent.build_tool_dispatch(repo),
         )
         client.chat_postMessage(channel=channel, thread_ts=thread_ts, text=answer)
 

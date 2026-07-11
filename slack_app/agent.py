@@ -23,31 +23,62 @@ _MAX_RETRIES = 3
 _RETRY_BACKOFF_SECONDS = 1
 
 _SYSTEM_PROMPT = (
-    "You are Warden, a security triage agent. Answer concisely using ONLY the "
-    "provided tools and context. Never invent CVE data, versions, or policy "
-    "decisions — if a tool doesn't have it, say so. The policy gate is "
-    "authoritative; you explain decisions, you do not override them."
+    "You're Warden, a friendly security teammate answering follow-up questions in a Slack "
+    "thread about a vulnerability scan. Be concise, warm, and conversational — plain "
+    "language, no jargon dump.\n\n"
+    "Grounding rules are absolute, no exceptions:\n"
+    "- Only state facts that come from the provided context or a tool result. Never invent "
+    "CVEs, packages, versions, repos, or policy outcomes.\n"
+    "- The policy gate's decision (auto/ask/block/ignore) is authoritative — explain it, "
+    "never second-guess or override it.\n"
+    "- You are always scoped to the one repo named in your context. Every tool call you "
+    "make is automatically scoped to that repo — you have no way to query any other repo, "
+    "so never claim to.\n"
+    "- If a tool call comes back empty, that means the data couldn't be retrieved for that "
+    "repo right now — say so plainly and name the repo you queried. Never conclude or imply "
+    "that 'nothing is blocked' or 'nothing happened' just because a lookup came back empty, "
+    "especially if findings are already visible earlier in the thread.\n"
+    "- If you're unsure, say so instead of guessing."
 )
 
 
+def build_context(repo: str, rows: list[dict]) -> str:
+    """Ground the agent in the resolved repo and the findings already visible in-thread.
+
+    Built once per question from the parent digest's stored rows, so the agent already
+    "sees" what's posted before calling any tool, and always has the resolved repo —
+    it never has to guess one.
+    """
+    if not rows:
+        return f"Repo: {repo}\nNo findings are currently stored for this repo."
+
+    lines = [f"Repo: {repo}", "Findings already posted in this thread:"]
+    for row in rows:
+        lines.append(f"- {row['cve']} ({row['package']}): {row['action']} — {'; '.join(row['reasons'])}")
+    return "\n".join(lines)
+
+
 def build_tools() -> list[dict]:
-    """OpenAI-style function-tool definitions for the read-only subset of core Warden can answer with."""
+    """OpenAI-style function-tool definitions for the read-only subset of core Warden can answer with.
+
+    None of these take a `repo` parameter — the repo is bound server-side in
+    build_tool_dispatch, so the model has no way to query a repo other than the one
+    resolved for this thread.
+    """
     return [
         {
             "type": "function",
             "function": {
                 "name": "get_findings",
                 "description": (
-                    "List stored policy decisions for a repo, optionally filtered by "
-                    "action (auto/ask/block/ignore). Snoozed findings are excluded."
+                    "List stored policy decisions for the current repo, optionally filtered "
+                    "by action (auto/ask/block/ignore). Snoozed findings are excluded."
                 ),
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "repo": {"type": "string"},
                         "action": {"type": "string", "enum": ["auto", "ask", "block", "ignore"]},
                     },
-                    "required": ["repo"],
                 },
             },
         },
@@ -58,8 +89,8 @@ def build_tools() -> list[dict]:
                 "description": "Explain, in plain language, why a specific finding got the policy action it did.",
                 "parameters": {
                     "type": "object",
-                    "properties": {"cve": {"type": "string"}, "repo": {"type": "string"}},
-                    "required": ["cve", "repo"],
+                    "properties": {"cve": {"type": "string"}},
+                    "required": ["cve"],
                 },
             },
         },
@@ -69,30 +100,31 @@ def build_tools() -> list[dict]:
                 "name": "get_finding_detail",
                 "description": (
                     "Return the stored decision plus enrichment (severity, cvss, epss, kev, "
-                    "installed/fixed versions) for a specific cve+repo."
+                    "installed/fixed versions) for a specific cve in the current repo."
                 ),
                 "parameters": {
                     "type": "object",
-                    "properties": {"cve": {"type": "string"}, "repo": {"type": "string"}},
-                    "required": ["cve", "repo"],
+                    "properties": {"cve": {"type": "string"}},
+                    "required": ["cve"],
                 },
             },
         },
     ]
 
 
-def build_tool_dispatch() -> dict:
-    """Maps tool name -> callable(**kwargs) -> JSON-serializable result.
+def build_tool_dispatch(repo: str) -> dict:
+    """Maps tool name -> callable(**kwargs) -> JSON-serializable result, bound to repo.
 
     Thin wrappers over core/ — no business logic here, and no draft_fix_pr: the
-    chat loop is answer-only.
+    chat loop is answer-only. repo is closed over rather than taken from the model, so
+    a tool call can never be issued against a guessed or invented repo.
     """
     return {
-        "get_findings": lambda repo, action=None: [
+        "get_findings": lambda action=None: [
             d.model_dump(mode="json") for d in pipeline.get_decisions(repo, action)
         ],
-        "explain_finding": lambda cve, repo: pipeline.explain_finding(cve, repo),
-        "get_finding_detail": lambda cve, repo: store.get_finding_detail(cve, repo),
+        "explain_finding": lambda cve: pipeline.explain_finding(cve, repo),
+        "get_finding_detail": lambda cve: store.get_finding_detail(cve, repo),
     }
 
 
