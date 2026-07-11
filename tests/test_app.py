@@ -1,6 +1,9 @@
+from unittest.mock import MagicMock
+
 from core import store
 from core.models import Action, Decision, Finding, Severity
-from slack_app.app import parse_repo_from_digest, parse_scan_command
+from slack_app import agent
+from slack_app.app import handle_thread_question, is_warden_digest, parse_repo_from_digest, parse_scan_command
 
 
 def test_parses_bare_repo():
@@ -79,13 +82,33 @@ def test_get_render_rows_against_seeded_store(tmp_path, monkeypatch):
     assert store.get_render_rows("acme/orders-api", action="auto") == []
 
 
-def test_parse_repo_from_digest_extracts_repo():
-    parent = {
+def _digest_parent(repo: str) -> dict:
+    """Matches blockkit.build_digest's real header: f":shield: Warden — {summary.repo}"."""
+    return {
         "blocks": [
-            {"type": "header", "text": {"type": "plain_text", "text": "acme/orders-api — 1 blocked"}},
+            {"type": "header", "text": {"type": "plain_text", "text": f":shield: Warden — {repo}"}},
         ]
     }
-    assert parse_repo_from_digest(parent) == "acme/orders-api"
+
+
+def test_parse_repo_from_digest_extracts_repo():
+    assert parse_repo_from_digest(_digest_parent("acme/orders-api")) == "acme/orders-api"
+
+
+def test_parse_repo_from_digest_extracts_repo_with_slashes_and_dashes():
+    assert parse_repo_from_digest(_digest_parent("KirthikVenkatram/warden-demo-target")) == (
+        "KirthikVenkatram/warden-demo-target"
+    )
+
+
+def test_parse_repo_from_digest_never_returns_the_fixed_warden_prefix():
+    # Regression: the old implementation split on " — " and took index [0], which is
+    # always the literal "Warden" prefix, never the actual repo — every thread question
+    # silently queried the wrong (constant) "repo" string.
+    repo = parse_repo_from_digest(_digest_parent("some-org/some-repo"))
+    assert repo == "some-org/some-repo"
+    assert repo != ":shield: Warden"
+    assert "Warden" not in repo
 
 
 def test_parse_repo_from_digest_rejects_non_digest_message():
@@ -95,3 +118,60 @@ def test_parse_repo_from_digest_rejects_non_digest_message():
     assert parse_repo_from_digest(
         {"blocks": [{"type": "section", "text": {"type": "mrkdwn", "text": "hi"}}]}
     ) is None
+
+
+def test_handle_thread_question_scopes_tool_dispatch_to_parsed_repo(monkeypatch):
+    """Regression for the repo-resolution bug: the thread question must be answered
+    against the exact repo parsed from the parent digest header, never a hardcoded
+    default and never the fixed "Warden" prefix."""
+    monkeypatch.setattr(store, "get_render_rows", lambda repo: [])
+    build_tool_dispatch_mock = MagicMock(return_value={})
+    monkeypatch.setattr(agent, "build_tool_dispatch", build_tool_dispatch_mock)
+    monkeypatch.setattr(agent, "answer_question", lambda *a, **k: "answer")
+
+    client = MagicMock()
+    client.conversations_replies.return_value = {"messages": [_digest_parent("X/Y")]}
+
+    event = {
+        "channel": "C123",
+        "thread_ts": "1000.0001",
+        "ts": "1001.0002",
+        "text": "why is this blocking",
+    }
+
+    handle_thread_question(event, client)
+
+    build_tool_dispatch_mock.assert_called_once_with("X/Y")
+    client.chat_postMessage.assert_called_once_with(channel="C123", thread_ts="1000.0001", text="answer")
+
+
+def test_handle_thread_question_refuses_to_guess_when_repo_unparseable(monkeypatch):
+    build_tool_dispatch_mock = MagicMock()
+    monkeypatch.setattr(agent, "build_tool_dispatch", build_tool_dispatch_mock)
+
+    client = MagicMock()
+    malformed_parent = {"blocks": [{"type": "header", "text": {"type": "plain_text", "text": "no separator here"}}]}
+    client.conversations_replies.return_value = {"messages": [malformed_parent]}
+
+    event = {
+        "channel": "C123",
+        "thread_ts": "1000.0001",
+        "ts": "1001.0002",
+        "text": "why is this blocking",
+    }
+
+    handle_thread_question(event, client)
+
+    build_tool_dispatch_mock.assert_not_called()
+    client.chat_postMessage.assert_called_once_with(
+        channel="C123", thread_ts="1000.0001", text="I can't tell which repo this thread is about."
+    )
+
+
+def test_is_warden_digest():
+    assert is_warden_digest(_digest_parent("acme/orders-api")) is True
+    assert is_warden_digest(None) is False
+    assert is_warden_digest({"blocks": []}) is False
+    assert is_warden_digest(
+        {"blocks": [{"type": "section", "text": {"type": "mrkdwn", "text": "hi"}}]}
+    ) is False

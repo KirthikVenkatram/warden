@@ -4,7 +4,15 @@
       "Bash(python -m pytest -q)",
       "Bash(python3 -c \"import json; d=json.load\\(open\\('/Users/kirthikvenkatram/Kirthik/warden/fixtures/demo_all.json'\\)\\); print\\(type\\(d\\)\\); print\\(json.dumps\\(d[:1] if isinstance\\(d,list\\) else d, indent=2\\)[:500]\\)\")",
       "Bash(python -m pytest tests/test_health.py tests/test_app.py -q)",
-      "Bash(.venv/bin/python -m pytest tests/test_health.py tests/test_app.py -q)"
+      "Bash(.venv/bin/python -m pytest tests/test_health.py tests/test_app.py -q)",
+      "Bash(docker info *)",
+      "Bash(rm -rf /tmp/dockertest)",
+      "Bash(mkdir -p /tmp/dockertest)",
+      "Bash(cp /Users/kirthikvenkatram/Kirthik/warden/pyproject.toml /tmp/dockertest/)",
+      "Bash(python3 -m venv .venv)",
+      "Bash(.venv/bin/pip install *)",
+      "Bash(.venv/bin/python -c ' *)",
+      "Bash(.venv/bin/python -m pytest tests/test_app.py -v)"
     ]
   }
 }

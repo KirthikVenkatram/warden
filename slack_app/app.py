@@ -104,22 +104,34 @@ def build_snooze_update(repo: str, rows: list[dict], finding: dict, until_ts: fl
     return build_digest(summary, combined, overrides=overrides)
 
 
-def parse_repo_from_digest(parent_message: dict | None) -> str | None:
-    """Return the repo a Warden digest message is for, or None if it isn't one.
+def is_warden_digest(parent_message: dict | None) -> bool:
+    """True if parent_message's first block is a header block (Warden's digest signature).
 
-    A digest's first block is always a "{repo} — {count line}" header (see
-    blockkit.build_digest) — that's the only signal we have that a thread's parent
-    was posted by Warden, since Socket Mode doesn't persist a ts->repo mapping.
+    Used to distinguish "not a Warden thread at all" (stay silent) from "a Warden
+    digest whose repo we failed to parse" (must say so explicitly, never guess).
     """
     if not parent_message:
-        return None
+        return False
     blocks = parent_message.get("blocks") or []
-    if not blocks or blocks[0].get("type") != "header":
+    return bool(blocks) and blocks[0].get("type") == "header"
+
+
+def parse_repo_from_digest(parent_message: dict | None) -> str | None:
+    """Return the repo a Warden digest message is for, or None if it can't be parsed.
+
+    A digest's first block is always a ":shield: Warden — {repo}" header (see
+    blockkit.build_digest's f":shield: Warden — {summary.repo}") — that's the only
+    signal we have that a thread's parent was posted by Warden, since Socket Mode
+    doesn't persist a ts->repo mapping. The repo is everything AFTER the " — "
+    separator, not before it — the prefix is the fixed literal "Warden".
+    """
+    if not is_warden_digest(parent_message):
         return None
-    text = blocks[0].get("text", {}).get("text", "")
+    text = parent_message["blocks"][0].get("text", {}).get("text", "")
     if " — " not in text:
         return None
-    return text.split(" — ", 1)[0].strip()
+    repo = text.split(" — ", 1)[1].strip()
+    return repo or None
 
 
 def _fallback_text(repo: str, summary) -> str:
@@ -217,42 +229,60 @@ def create_app() -> App:
 
         respond(replace_original=True, text=_fallback_text(repo, _summary_from_rows(repo, rows)), blocks=update["blocks"])
 
-    @app.event("message")
-    def handle_thread_question(event, client):
-        if event.get("bot_id") or event.get("subtype"):
-            return
-
-        thread_ts = event.get("thread_ts")
-        if not thread_ts or thread_ts == event.get("ts"):
-            return  # not a reply inside a thread
-
-        question = (event.get("text") or "").strip()
-        if not question:
-            return
-
-        channel = event["channel"]
-        try:
-            replies = client.conversations_replies(channel=channel, ts=thread_ts, limit=1)
-        except Exception:
-            logger.exception("failed to fetch parent message for thread %s", thread_ts)
-            return
-
-        parent = (replies.get("messages") or [None])[0]
-        repo = parse_repo_from_digest(parent)
-        if repo is None:
-            return  # thread's parent isn't a Warden digest
-
-        rows = store.get_render_rows(repo)
-        context = agent.build_context(repo, rows)
-        answer = agent.answer_question(
-            question,
-            context,
-            agent.build_tools(),
-            agent.build_tool_dispatch(repo),
-        )
-        client.chat_postMessage(channel=channel, thread_ts=thread_ts, text=answer)
+    app.event("message")(handle_thread_question)
 
     return app
+
+
+def handle_thread_question(event: dict, client) -> None:
+    """Answer an in-thread follow-up question, strictly scoped to the thread's own repo.
+
+    Module-level (not a create_app() closure) so tests can call it directly with a
+    fake event/client and assert exactly what repo got resolved and passed downstream.
+    """
+    if event.get("bot_id") or event.get("subtype"):
+        return
+
+    thread_ts = event.get("thread_ts")
+    if not thread_ts or thread_ts == event.get("ts"):
+        return  # not a reply inside a thread
+
+    question = (event.get("text") or "").strip()
+    if not question:
+        return
+
+    channel = event["channel"]
+    try:
+        replies = client.conversations_replies(channel=channel, ts=thread_ts, limit=1)
+    except Exception:
+        logger.exception("failed to fetch parent message for thread %s", thread_ts)
+        return
+
+    parent = (replies.get("messages") or [None])[0]
+    if not is_warden_digest(parent):
+        return  # thread's parent isn't a Warden digest at all — stay silent
+
+    repo = parse_repo_from_digest(parent)
+    if repo is None:
+        logger.warning("thread %s looks like a Warden digest but repo could not be parsed", thread_ts)
+        client.chat_postMessage(
+            channel=channel,
+            thread_ts=thread_ts,
+            text="I can't tell which repo this thread is about.",
+        )
+        return
+
+    logger.info("thread question resolved repo=%r channel=%s thread_ts=%s", repo, channel, thread_ts)
+
+    rows = store.get_render_rows(repo)
+    context = agent.build_context(repo, rows)
+    answer = agent.answer_question(
+        question,
+        context,
+        agent.build_tools(),
+        agent.build_tool_dispatch(repo),
+    )
+    client.chat_postMessage(channel=channel, thread_ts=thread_ts, text=answer)
 
 
 def _seed_demo_data_if_empty() -> None:

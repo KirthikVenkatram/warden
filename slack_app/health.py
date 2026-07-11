@@ -5,7 +5,10 @@ real functionality runs entirely over Slack Socket Mode (outbound only) and need
 inbound HTTP — this exists solely to satisfy that platform requirement.
 """
 
+import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+_DEFAULT_PORT = int(os.environ.get("PORT", "10000"))
 
 
 class HealthHandler(BaseHTTPRequestHandler):
@@ -23,10 +26,10 @@ class HealthHandler(BaseHTTPRequestHandler):
         pass  # keep request noise out of app logs
 
 
-def create_server(port: int) -> ThreadingHTTPServer:
+def create_server(port: int = _DEFAULT_PORT) -> ThreadingHTTPServer:
     return ThreadingHTTPServer(("0.0.0.0", port), HealthHandler)
 
 
-def run(port: int) -> None:
+def run(port: int = _DEFAULT_PORT) -> None:
     server = create_server(port)
     server.serve_forever()

@@ -34,10 +34,11 @@ _SYSTEM_PROMPT = (
     "- You are always scoped to the one repo named in your context. Every tool call you "
     "make is automatically scoped to that repo — you have no way to query any other repo, "
     "so never claim to.\n"
-    "- If a tool call comes back empty, that means the data couldn't be retrieved for that "
-    "repo right now — say so plainly and name the repo you queried. Never conclude or imply "
-    "that 'nothing is blocked' or 'nothing happened' just because a lookup came back empty, "
-    "especially if findings are already visible earlier in the thread.\n"
+    "- If a tool call comes back empty (an empty list or {}), respond with exactly: "
+    "\"I don't have findings for <repo>\" — substituting the real repo named in your context "
+    "above, never a guessed or different one. Never conclude or imply that 'nothing is "
+    "blocked' or 'nothing happened' just because a lookup came back empty, especially if "
+    "findings are already visible earlier in the thread.\n"
     "- If you're unsure, say so instead of guessing."
 )
 
