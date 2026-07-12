@@ -62,6 +62,22 @@ slack_app/    Thin Bolt Socket Mode client — Block Kit digest, button actions,
 Renders a digest with one blocked finding, one needing approval, and one already
 auto-fixed.
 
+## Scope note
+
+This demo runs against a seeded fixture dataset (`fixture:demo_all`) so the
+policy decisions, EPSS/KEV values, and remediation targets are fixed and
+repeatable — every run produces the same three findings shown in the video.
+
+Scanning an arbitrary repository without the `--source fixture:...` flag
+requires live Trivy scanner output, which isn't wired into this build. The
+enrichment layer (EPSS + CISA KEV lookups) and the policy engine are fully
+live and general-purpose; the scanner input is the one piece intentionally
+fixed for a deterministic demo.
+
+For a concrete example of the input format the live scanning path expects,
+see `trivy-report.json` in the demo target repo
+(https://github.com/KirthikVenkatram/warden-demo-target).
+
 ---
 
 Built for the Slack Agent Builder Challenge.
