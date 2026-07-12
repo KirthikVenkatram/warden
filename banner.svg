@@ -1,0 +1,23 @@
+<svg width="1200" height="420" viewBox="0 0 1200 420" xmlns="http://www.w3.org/2000/svg" role="img">
+<title>Warden — policy-as-code as the autonomy boundary for an AI security agent</title>
+<rect width="1200" height="420" fill="#0b0e14"/>
+
+<g transform="translate(600,150)">
+  <path d="M0,-90 L78,-56 V14 C78,74 40,118 0,138 C-40,118 -78,74 -78,14 V-56 Z"
+        fill="none" stroke="#2dd4a7" stroke-width="4"/>
+  <path d="M-30,4 L-8,28 L34,-24" fill="none" stroke="#2dd4a7" stroke-width="8"
+        stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+
+<text x="600" y="300" text-anchor="middle" font-family="Helvetica, Arial, sans-serif"
+      font-size="86" font-weight="700" letter-spacing="14" fill="#f4f6f8">WARDEN</text>
+
+<text x="600" y="340" text-anchor="middle" font-family="Helvetica, Arial, sans-serif"
+      font-size="20" font-weight="400" fill="#9aa4b2">
+  Policy-as-code as the autonomy boundary for an AI security agent
+</text>
+
+<g font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#6b7688">
+  <text x="600" y="385" text-anchor="middle">Slack Agent Builder Challenge · MCP · OPA/Rego · Groq</text>
+</g>
+</svg>
