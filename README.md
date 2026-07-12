@@ -1,8 +1,8 @@
-<p align="center"><img src="banner.svg" alt="Warden — policy-as-code as the autonomy boundary for an AI security agent" width="100%"></p>
+<p align="center"><img src="banner.svg" alt="Warden" width="100%"></p>
 
-<p align="center">
-![License: MIT](https://img.shields.io/badge/license-MIT-2dd4a7) ![Python](https://img.shields.io/badge/python-3.12-2dd4a7) ![Built for](https://img.shields.io/badge/built%20for-Slack%20Agent%20Builder%20Challenge-2dd4a7)
-</p>
+![License: MIT](https://img.shields.io/badge/license-MIT-2dd4a7)
+![Python](https://img.shields.io/badge/python-3.12-2dd4a7)
+![Built for](https://img.shields.io/badge/built%20for-Slack%20Agent%20Builder%20Challenge-2dd4a7)
 
 # Warden
 
