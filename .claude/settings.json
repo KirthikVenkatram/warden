@@ -12,7 +12,8 @@
       "Bash(python3 -m venv .venv)",
       "Bash(.venv/bin/pip install *)",
       "Bash(.venv/bin/python -c ' *)",
-      "Bash(.venv/bin/python -m pytest tests/test_app.py -v)"
+      "Bash(.venv/bin/python -m pytest tests/test_app.py -v)",
+      "Bash(git -C /Users/kirthikvenkatram/Kirthik/warden diff README.md)"
     ]
   }
 }
